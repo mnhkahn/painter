@@ -20,6 +20,8 @@ type Painter interface {
 	Picture(pic string, x, y, w, h float64) error
 	Rect(styleStr string, x, y, w, h float64) error
 	QRCode(code string, x, y, w, h float64) error
+	NewTable(startX, startY float64, font, fontStyle string, fontSize float64, heads []*TableHead, rows *TableRow) error
+	MiShapeWithPinyin(text, font, fontStyle string, fontSize, x, y, w, hPinyin float64) error
 	Output(writer io.Writer) error
 }
 
@@ -63,4 +65,13 @@ func (c *Color) G() uint8 {
 
 func (c *Color) R() uint8 {
 	return c.r
+}
+
+type TableHead struct {
+	Text  string
+	Width float64
+}
+type TableRow struct {
+	HeightPerLine float64
+	RowNums       int
 }

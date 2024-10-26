@@ -6,12 +6,16 @@ import (
 	"image/jpeg"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/boombuler/barcode"
 	"github.com/boombuler/barcode/code128"
 	"github.com/boombuler/barcode/qr"
 	"github.com/mnhkahn/gofpdf"
+	"github.com/mnhkahn/gogogo/logger"
+	"github.com/mozillazg/go-pinyin"
 )
 
 type PdfPainter struct {
@@ -193,18 +197,56 @@ func (p *PdfPainter) Output(writer io.Writer) error {
 // initFontStyle 目前只支持黑体
 func initFontStyle(pdf *gofpdf.Fpdf, resourceDir string) error {
 	// 写字
-	pdf.AddUTF8Font(FontSimhei, "", resourceDir+"/font/simhei.ttf")
-	err := pdf.Error()
-	if err != nil {
-		return err
-	}
-	pdf.AddUTF8Font(FontSimhei, FontBold, resourceDir+"/font/simhei.ttf")
-	err = pdf.Error()
-	if err != nil {
-		return err
-	}
+	err := filepath.Walk(resourceDir+"/font", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) == ".ttf" {
+			file_name := filepath.Base(path) //use this built-in function to obtain filename
+			names := strings.Split(file_name, "_")
+			if len(names) == 1 {
+				nameWithoutExt := strings.TrimSuffix(file_name, ".ttf")
+				logger.Info("init font", nameWithoutExt, "normal", path)
+				pdf.AddUTF8Font(nameWithoutExt, "", path)
+				err := pdf.Error()
+				if err != nil {
+					return err
+				}
+			} else if len(names) >= 2 {
+				style := strings.TrimSuffix(names[len(names)-1], ".ttf")
+				nameWithoutExt := strings.Join(names[:len(names)-1], "_")
+				if strings.ToLower(style) == "bold" {
+					logger.Info("init font", nameWithoutExt, FontBold, path)
+					pdf.AddUTF8Font(nameWithoutExt, FontBold, path)
+					err = pdf.Error()
+					if err != nil {
+						return err
+					}
+				} else if strings.ToLower(style) == "italic" {
+					logger.Info("init font", nameWithoutExt, FontItalic, path)
+					pdf.AddUTF8Font(nameWithoutExt, FontItalic, path)
+					err = pdf.Error()
+					if err != nil {
+						return err
+					}
+				} else {
+					logger.Info("init font", nameWithoutExt, "normal", path)
+					pdf.AddUTF8Font(nameWithoutExt, FontNone, path)
+					err := pdf.Error()
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
 
-	return nil
+		return nil
+	})
+
+	return err
 }
 
 func getTextWidthStyle(pdf *gofpdf.Fpdf, txt string, font, fontStyle string, w, fontSize float64) float64 {
@@ -289,4 +331,61 @@ func getBarcodeWidth(code string) int {
 	} else {
 		return 600
 	}
+}
+
+func (p *PdfPainter) NewTable(startX, startY float64, font, fontStyle string, fontSize float64, heads []*TableHead, rows *TableRow) error {
+	// 计算总宽度
+	totalWidth := float64(0)
+	for _, head := range heads {
+		totalWidth += head.Width
+	}
+	totalHeight := rows.HeightPerLine * float64(rows.RowNums)
+	for i := 0; i <= rows.RowNums; i += 1 {
+		// 横线
+		p.Line(startX, float64(i)*rows.HeightPerLine+startY, startX+totalWidth, float64(i)*rows.HeightPerLine+startY, 0.1, false)
+	}
+	start := startX
+	for _, head := range heads {
+		// 竖线
+		p.Line(start, startY, start, startY+totalHeight, 0.1, false)
+		p.Text(head.Text, font, fontStyle, fontSize, start, startY, head.Width, rows.HeightPerLine, AlignCenterMiddle, nil, gofpdf.BorderNone)
+		start += head.Width
+	}
+	// 补最右竖线
+	p.Line(startX+totalWidth, startY, startX+totalWidth, startY+totalHeight, 0.1, false)
+	return nil
+}
+
+func (p *PdfPainter) MiShapeWithPinyin(text, font, fontStyle string, fontSize, x, y, w, hPinyin float64) error {
+	a := pinyin.NewArgs()
+	a.Style = pinyin.Tone
+	pinyin := pinyin.Pinyin(text, a)
+	for i, v := range pinyin {
+		p.Text(v[0], font, fontStyle, fontSize, x+float64(i)*w, y, w, hPinyin, AlignCenterMiddle, nil, gofpdf.BorderNone)
+	}
+
+	p.MiShape(x, y+hPinyin, w, len(pinyin))
+	return nil
+}
+
+func (p *PdfPainter) MiShape(x, y, w float64, wordNum int) error {
+	totalWidth := w * float64(wordNum)
+	totalHeight := w
+	// 外框：上右下左
+	p.Line(x, y, x+totalWidth, y, 0.1, false)
+	p.Line(x+totalWidth, y, x+totalWidth, y+totalHeight, 0.1, false)
+	p.Line(x, y+totalHeight, x+totalWidth, y+totalHeight, 0.1, false)
+	p.Line(x, y, x, y+totalHeight, 0.1, false)
+	// 字间隔竖线
+	for i := 1; i < wordNum; i++ {
+		p.Line(x+float64(i)*w, y, x+float64(i)*w, y+totalHeight, 0.1, false)
+	}
+	// 中间虚线
+	p.Line(x, y+totalHeight/2, x+totalWidth, y+totalHeight/2, 0.1, true)
+	// 每个字虚线
+	for i := 0; i < wordNum; i++ {
+		p.Line(x+(float64(i)+0.5)*w, y, x+(float64(i)+0.5)*w, y+totalHeight, 0.1, true)
+	}
+
+	return nil
 }
