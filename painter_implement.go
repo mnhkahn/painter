@@ -3,6 +3,7 @@ package painter
 
 import (
 	"bytes"
+	"fmt"
 	"image/jpeg"
 	"io"
 	"math"
@@ -333,26 +334,120 @@ func getBarcodeWidth(code string) int {
 	}
 }
 
-func (p *PdfPainter) NewTable(startX, startY float64, font, fontStyle string, fontSize float64, heads []*TableHead, rows *TableRow) error {
+type lineFromTo struct {
+	start, end float64
+}
+
+func delLineFromTo(l, o *lineFromTo) []*lineFromTo {
+	if o == nil {
+		return []*lineFromTo{l}
+	} else if o.start == l.start {
+		if o.end >= l.end {
+			return nil
+		} else {
+			return []*lineFromTo{{o.end, l.end}}
+		}
+	} else if o.end == l.end {
+		if l.start >= o.start {
+			return nil
+		} else {
+			return []*lineFromTo{{l.start, o.start}}
+		}
+	} else if o.start >= l.end || o.end <= l.start {
+		return []*lineFromTo{l}
+	} else {
+		return []*lineFromTo{{l.start, o.start}, {o.end, l.end}}
+	}
+}
+
+func debugLineFromTo(a []*lineFromTo) string {
+	buf := bytes.NewBuffer(nil)
+	for _, aa := range a {
+		buf.WriteString(fmt.Sprintf("[%v:%v]", aa.start, aa.end))
+	}
+	return buf.String()
+}
+
+func (p *PdfPainter) Table(startX, startY float64, font, fontStyle string, fontSize float64, table *Table) error {
 	// 计算总宽度
 	totalWidth := float64(0)
-	for _, head := range heads {
+	for _, head := range table.heads {
 		totalWidth += head.Width
 	}
-	totalHeight := rows.HeightPerLine * float64(rows.RowNums)
-	for i := 0; i <= rows.RowNums; i += 1 {
-		// 横线
-		p.Line(startX, float64(i)*rows.HeightPerLine+startY, startX+totalWidth, float64(i)*rows.HeightPerLine+startY, 0.1, false)
+	totalHeight := table.rows.HeightPerLine * float64(table.rows.RowNums)
+
+	// 初始化所有线
+	colLines := map[int][]*lineFromTo{}
+	for i := range table.heads {
+		colLines[i] = append(colLines[i], &lineFromTo{start: startY, end: startY + totalHeight})
 	}
+	rowLines := map[int][]*lineFromTo{}
+	for i := 0; i <= table.rows.RowNums; i += 1 {
+		rowLines[i] = append(rowLines[i], &lineFromTo{start: startX, end: startX + totalWidth})
+	}
+	for _, span := range table.rows.Spans {
+		for i := 1; i < span.Span; i++ {
+			if span.Type == Colspan {
+				// 从colLines里剔除
+				tobeDel := &lineFromTo{start: startY + table.GetY(span.Y), end: startY + table.GetY(span.Y+1)}
+				newColLines := make([]*lineFromTo, 0, len(colLines[span.X+i]))
+				for _, colLine := range colLines[span.X+i] {
+					newColLines = append(newColLines, delLineFromTo(colLine, tobeDel)...)
+					// logger.Info("BBB", span.X+i, colLine, tobeDel, debugLineFromTo(newColLines))
+				}
+				colLines[span.X+i] = newColLines
+			} else if span.Type == Rowspan {
+				tobeDel := &lineFromTo{start: startX + table.GetX(span.X), end: startX + table.GetX(span.X+1)}
+				newRowLines := make([]*lineFromTo, 0, len(rowLines[span.Y+i]))
+				for _, rowLine := range rowLines[span.Y+i] {
+					newRowLines = append(newRowLines, delLineFromTo(rowLine, tobeDel)...)
+					// logger.Info("CCC", span.Y+i, rowLine, tobeDel, debugLineFromTo(newRowLines))
+				}
+				rowLines[span.Y+i] = newRowLines
+			}
+		}
+		if span.Text != "" {
+			textX := table.GetX(span.X)
+			textY := table.GetY(span.Y)
+			textWidth := table.GetX(span.Span+span.X) - textX
+			if span.Span == 0 {
+				textWidth = table.GetX(span.X+1) - textX
+			}
+			textHeight := table.rows.HeightPerLine
+			if span.Type == Rowspan {
+				textWidth = table.GetX(span.X+1) - textX
+				textHeight = table.GetY(span.Span+span.Y) - textY
+			}
+			// logger.Info("text", span.Text, textX, textY, textWidth, textHeight)
+			p.Text(span.Text, FontSimhei, "", fontSize, textX+startX, textY+startY, textWidth, textHeight, AlignCenterMiddle, nil, gofpdf.BorderNone)
+		}
+	}
+
 	start := startX
-	for _, head := range heads {
+	for i, head := range table.heads {
 		// 竖线
-		p.Line(start, startY, start, startY+totalHeight, 0.1, false)
-		p.Text(head.Text, font, fontStyle, fontSize, start, startY, head.Width, rows.HeightPerLine, AlignCenterMiddle, nil, gofpdf.BorderNone)
+		if span := colLines[i]; span != nil {
+			for _, s := range span {
+				p.Line(start, s.start, start, s.end, 0.1, false)
+			}
+		}
+
+		p.Text(head.Text, font, fontStyle, fontSize, start, startY, head.Width, table.rows.HeightPerLine, AlignCenterMiddle, nil, gofpdf.BorderNone)
 		start += head.Width
 	}
 	// 补最右竖线
 	p.Line(startX+totalWidth, startY, startX+totalWidth, startY+totalHeight, 0.1, false)
+
+	for i := 0; i <= table.rows.RowNums; i += 1 {
+		// 横线
+		// 如果设置了rowspan，横线需要处理，变短或者画两段
+		if span := rowLines[i]; span != nil {
+			for _, s := range span {
+				// logger.Info("DDDD", s.start, s.end)
+				p.Line(s.start, float64(i)*table.rows.HeightPerLine+startY, s.end, float64(i)*table.rows.HeightPerLine+startY, 0.1, false)
+			}
+		}
+	}
 	return nil
 }
 
