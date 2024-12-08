@@ -368,17 +368,17 @@ func debugLineFromTo(a []*lineFromTo) string {
 	return buf.String()
 }
 
-func (p *PdfPainter) Table(startX, startY float64, font, fontStyle string, fontSize float64, table *Table) error {
+func (p *PdfPainter) Table(startX, startY float64, table *Table) error {
 	// 计算总宽度
 	totalWidth := float64(0)
-	for _, head := range table.heads {
+	for _, head := range table.heads.Heads {
 		totalWidth += head.Width
 	}
 	totalHeight := table.rows.HeightPerLine * float64(table.rows.RowNums)
 
 	// 初始化所有线
 	colLines := map[int][]*lineFromTo{}
-	for i := range table.heads {
+	for i := range table.heads.Heads {
 		colLines[i] = append(colLines[i], &lineFromTo{start: startY, end: startY + totalHeight})
 	}
 	rowLines := map[int][]*lineFromTo{}
@@ -393,7 +393,6 @@ func (p *PdfPainter) Table(startX, startY float64, font, fontStyle string, fontS
 				newColLines := make([]*lineFromTo, 0, len(colLines[span.X+i]))
 				for _, colLine := range colLines[span.X+i] {
 					newColLines = append(newColLines, delLineFromTo(colLine, tobeDel)...)
-					// logger.Info("BBB", span.X+i, colLine, tobeDel, debugLineFromTo(newColLines))
 				}
 				colLines[span.X+i] = newColLines
 			} else if span.Type == Rowspan {
@@ -401,7 +400,6 @@ func (p *PdfPainter) Table(startX, startY float64, font, fontStyle string, fontS
 				newRowLines := make([]*lineFromTo, 0, len(rowLines[span.Y+i]))
 				for _, rowLine := range rowLines[span.Y+i] {
 					newRowLines = append(newRowLines, delLineFromTo(rowLine, tobeDel)...)
-					// logger.Info("CCC", span.Y+i, rowLine, tobeDel, debugLineFromTo(newRowLines))
 				}
 				rowLines[span.Y+i] = newRowLines
 			}
@@ -418,13 +416,13 @@ func (p *PdfPainter) Table(startX, startY float64, font, fontStyle string, fontS
 				textWidth = table.GetX(span.X+1) - textX
 				textHeight = table.GetY(span.Span+span.Y) - textY
 			}
-			// logger.Info("text", span.Text, textX, textY, textWidth, textHeight)
-			p.Text(span.Text, FontSimhei, "", fontSize, textX+startX, textY+startY, textWidth, textHeight, AlignCenterMiddle, nil, gofpdf.BorderNone)
+
+			p.Text(span.Text, table.rows.Font, table.rows.FontStyle, table.rows.FontSize, textX+startX, textY+startY, textWidth, textHeight, AlignCenterMiddle, nil, gofpdf.BorderNone)
 		}
 	}
 
 	start := startX
-	for i, head := range table.heads {
+	for i, head := range table.heads.Heads {
 		// 竖线
 		if span := colLines[i]; span != nil {
 			for _, s := range span {
@@ -432,7 +430,7 @@ func (p *PdfPainter) Table(startX, startY float64, font, fontStyle string, fontS
 			}
 		}
 
-		p.Text(head.Text, font, fontStyle, fontSize, start, startY, head.Width, table.rows.HeightPerLine, AlignCenterMiddle, nil, gofpdf.BorderNone)
+		p.Text(head.Text, table.heads.Font, table.heads.FontStyle, table.heads.FontSize, start, startY, head.Width, table.rows.HeightPerLine, AlignCenterMiddle, nil, gofpdf.BorderNone)
 		start += head.Width
 	}
 	// 补最右竖线
